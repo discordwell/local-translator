@@ -1,0 +1,12 @@
+torch
+transformers
+fastapi
+uvicorn[standard]
+zeroconf
+scipy
+soundfile
+python-multipart
+accelerate
+sentencepiece
+pyobjc-core
+pyobjc-framework-CoreBluetooth
