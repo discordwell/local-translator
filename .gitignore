@@ -60,3 +60,4 @@ DerivedData/
 
 # Logs
 *.log
+ios-app/build/

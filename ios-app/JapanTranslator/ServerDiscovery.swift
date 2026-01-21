@@ -24,7 +24,8 @@ class ServerDiscovery: ObservableObject {
     }
 
     deinit {
-        stopBrowsing()
+        browser?.cancel()
+        connection?.cancel()
     }
 
     /// Start browsing for the translation server via Bonjour.
