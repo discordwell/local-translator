@@ -101,10 +101,16 @@ class BluetoothServer(NSObject):
 
     def sendAudioResponse_(self, audio_data):
         """Send translated audio back to the iPhone in chunks."""
+        import time
+        from Foundation import NSRunLoop, NSDate
+
         if not self._audio_output_char or not self._peripheral_manager:
+            print("Cannot send audio - no characteristic or peripheral manager")
             return
 
         chunk_size = 500  # BLE MTU limit (leaving room for overhead)
+        total_chunks = (len(audio_data) + chunk_size - 1) // chunk_size
+        print(f"Sending {len(audio_data)} bytes in {total_chunks} chunks...")
 
         # Send start marker with total size
         start_marker = struct.pack('>BI', CMD_AUDIO_START, len(audio_data))
@@ -113,13 +119,30 @@ class BluetoothServer(NSObject):
             ns_data, self._audio_output_char, None
         )
 
-        # Send chunks
+        # Small delay to let start marker through
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.01))
+
+        # Send chunks with pacing
+        sent_chunks = 0
         for i in range(0, len(audio_data), chunk_size):
             chunk = bytes([CMD_AUDIO_CHUNK]) + audio_data[i:i + chunk_size]
             ns_data = NSData.dataWithBytes_length_(chunk, len(chunk))
-            self._peripheral_manager.updateValue_forCharacteristic_onSubscribedCentrals_(
+
+            # Try to send, retry if queue is full
+            success = self._peripheral_manager.updateValue_forCharacteristic_onSubscribedCentrals_(
                 ns_data, self._audio_output_char, None
             )
+
+            sent_chunks += 1
+
+            # Pace the sends - run loop briefly every few chunks
+            if sent_chunks % 10 == 0:
+                NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.005))
+
+        print(f"Sent {sent_chunks} chunks")
+
+        # Small delay before end marker
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.02))
 
         # Send end marker
         end_marker = bytes([CMD_AUDIO_END])
@@ -127,6 +150,7 @@ class BluetoothServer(NSObject):
         self._peripheral_manager.updateValue_forCharacteristic_onSubscribedCentrals_(
             ns_data, self._audio_output_char, None
         )
+        print("Audio send complete")
 
     # MARK: - CBPeripheralManagerDelegate methods
 
@@ -199,7 +223,7 @@ class BluetoothServer(NSObject):
         # Start advertising
         self._peripheral_manager.startAdvertising_({
             CBAdvertisementDataServiceUUIDsKey: [CBUUID.UUIDWithString_(SERVICE_UUID)],
-            CBAdvertisementDataLocalNameKey: "JapanTranslator",
+            CBAdvertisementDataLocalNameKey: "LocalTranslator",
         })
 
     def peripheralManagerDidStartAdvertising_error_(self, peripheral, error):

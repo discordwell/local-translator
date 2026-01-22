@@ -6,6 +6,7 @@ can automatically discover the server on the local network.
 """
 
 import socket
+import threading
 from zeroconf import ServiceInfo, Zeroconf
 
 
@@ -19,6 +20,7 @@ class BonjourService:
         self.port = port
         self.zeroconf = None
         self.service_info = None
+        self._thread = None
 
     def _get_local_ip(self) -> str:
         """Get the local IP address of this machine."""
@@ -33,6 +35,15 @@ class BonjourService:
         except Exception:
             # Fallback to localhost if we can't determine IP
             return "127.0.0.1"
+
+    def _register_service(self):
+        """Register the service in a separate thread."""
+        try:
+            self.zeroconf = Zeroconf()
+            self.zeroconf.register_service(self.service_info)
+            print(f"Bonjour service registered: {self.SERVICE_TYPE}")
+        except Exception as e:
+            print(f"Warning: Could not register Bonjour service: {e}")
 
     def start(self):
         """Start advertising the service via Bonjour."""
@@ -55,17 +66,19 @@ class BonjourService:
             server=f"jptranslate.local.",
         )
 
-        # Register the service
-        self.zeroconf = Zeroconf()
-        self.zeroconf.register_service(self.service_info)
-        print(f"Bonjour service registered: {self.SERVICE_TYPE}")
+        # Register the service in a separate thread to avoid blocking asyncio
+        self._thread = threading.Thread(target=self._register_service, daemon=True)
+        self._thread.start()
 
     def stop(self):
         """Stop advertising the service."""
         if self.zeroconf is not None:
             print("Unregistering Bonjour service...")
-            self.zeroconf.unregister_service(self.service_info)
-            self.zeroconf.close()
+            try:
+                self.zeroconf.unregister_service(self.service_info)
+                self.zeroconf.close()
+            except Exception:
+                pass
             self.zeroconf = None
             self.service_info = None
             print("Bonjour service stopped")

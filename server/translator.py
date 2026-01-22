@@ -95,7 +95,7 @@ class Translator:
 
         # Process audio input
         inputs = self.processor(
-            audios=waveform,
+            audio=waveform,
             sampling_rate=16000,
             return_tensors="pt"
         )
@@ -117,7 +117,7 @@ class Translator:
 
         return text
 
-    def translate_en_to_ja(self, audio_bytes: bytes) -> bytes:
+    def translate_en_to_ja(self, audio_bytes: bytes) -> tuple[bytes, str]:
         """
         Translate English speech to Japanese speech.
 
@@ -125,7 +125,7 @@ class Translator:
             audio_bytes: WAV audio data containing English speech
 
         Returns:
-            WAV audio data containing Japanese speech
+            Tuple of (WAV audio data containing Japanese speech, Japanese text)
         """
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
@@ -136,7 +136,7 @@ class Translator:
 
         # Process audio input
         inputs = self.processor(
-            audios=waveform,
+            audio=waveform,
             sampling_rate=16000,
             return_tensors="pt"
         )
@@ -148,21 +148,31 @@ class Translator:
                 **inputs,
                 tgt_lang="jpn",
                 generate_speech=True,
+                return_intermediate_token_ids=True,
             )
 
+        # Extract the intermediate Japanese text if available
+        japanese_text = ""
+        if output.sequences is not None:
+            try:
+                japanese_text = self.processor.decode(output.sequences[0].tolist(), skip_special_tokens=True)
+                print(f"Japanese text: {japanese_text}")
+            except Exception as e:
+                print(f"Could not decode text: {e}")
+
         # Extract audio waveform from output
-        # output[1] contains the audio waveform for speech generation
-        audio_array = output[1].cpu().numpy().squeeze()
+        # SeamlessM4Tv2GenerationOutput has .waveform attribute
+        audio_array = output.waveform.cpu().numpy().squeeze()
 
         # The model outputs at 16kHz sample rate
-        output_sample_rate = 16000
+        output_sample_rate = self.model.config.sampling_rate
 
         # Convert to WAV bytes
         audio_io = io.BytesIO()
         sf.write(audio_io, audio_array, output_sample_rate, format='WAV')
         audio_io.seek(0)
 
-        return audio_io.read()
+        return audio_io.read(), japanese_text
 
 
 # Global translator instance

@@ -9,11 +9,13 @@ struct ContentView: View {
 
     // State
     @State private var translationText: String = ""
+    @State private var japaneseText: String = ""  // Japanese text to display for EN->JA
     @State private var isTranslating: Bool = false
     @State private var errorMessage: String?
     @State private var activeMode: TranslationMode?
     @State private var hasPermission: Bool = false
     @State private var connectionMode: ConnectionMode = .bluetooth  // Default to Bluetooth
+    @State private var lastTranslationMode: TranslationMode?
 
     private let translationService = TranslationService()
 
@@ -84,13 +86,19 @@ struct ContentView: View {
         }
         .onChange(of: bluetoothManager.translatedText) { _, newValue in
             if !newValue.isEmpty {
-                translationText = newValue
+                // Check if this is Japanese text (for EN->JA) or English text (for JA->EN)
+                if lastTranslationMode == .englishToJapanese {
+                    japaneseText = newValue
+                    translationText = ""
+                } else {
+                    translationText = newValue
+                    japaneseText = ""
+                }
                 isTranslating = false
             }
         }
         .onChange(of: bluetoothManager.receivedAudio) { _, newValue in
             if let audioData = newValue {
-                translationText = "[Playing Japanese audio / 日本語音声を再生中]"
                 audioPlayer.play(audioData: audioData)
                 isTranslating = false
             }
@@ -101,10 +109,10 @@ struct ContentView: View {
 
     private var headerView: some View {
         VStack(spacing: 4) {
-            Text("Japan Translator")
+            Text("Local Translator")
                 .font(.title)
                 .fontWeight(.bold)
-            Text("日本語翻訳ツール")
+            Text("ローカル翻訳")
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
@@ -154,7 +162,7 @@ struct ContentView: View {
     // MARK: - Translation Display
 
     private var translationDisplayView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .center, spacing: 12) {
             if let error = errorMessage {
                 Text(error)
                     .foregroundColor(.red)
@@ -165,17 +173,52 @@ struct ContentView: View {
                     Text("Translating... / 翻訳中...")
                         .foregroundColor(.secondary)
                 }
-            } else if !translationText.isEmpty {
-                Text(translationText)
-                    .font(.title3)
-                    .fontWeight(.medium)
+            } else if !translationText.isEmpty || !japaneseText.isEmpty {
+                // Show translation text
+                if !translationText.isEmpty {
+                    Text(translationText)
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .multilineTextAlignment(.center)
+                }
+
+                // Show Japanese text for EN->JA translations
+                if !japaneseText.isEmpty {
+                    Text(japaneseText)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
+                }
+
+                // Replay button for audio translations
+                if lastTranslationMode == .englishToJapanese && audioPlayer.canReplay {
+                    Button(action: {
+                        audioPlayer.replay()
+                    }) {
+                        HStack {
+                            Image(systemName: audioPlayer.isPlaying ? "speaker.wave.3.fill" : "arrow.counterclockwise.circle.fill")
+                                .font(.title2)
+                            Text(audioPlayer.isPlaying ? "Playing..." : "Replay / 再生")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(audioPlayer.isPlaying ? Color.orange : Color.blue)
+                        .cornerRadius(25)
+                    }
+                    .disabled(audioPlayer.isPlaying)
+                    .padding(.top, 8)
+                }
             } else {
                 Text("Translation will appear here\n翻訳がここに表示されます")
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .center)
+        .frame(maxWidth: .infinity, minHeight: 180, alignment: .center)
         .padding()
         .background(Color(.secondarySystemBackground))
         .cornerRadius(12)
@@ -315,6 +358,14 @@ struct ContentView: View {
     }
 
     private func translateViaBluetooth(mode: TranslationMode, audioData: Data) {
+        lastTranslationMode = mode
+        // Clear previous results
+        if mode == .englishToJapanese {
+            japaneseText = ""
+        } else {
+            translationText = ""
+        }
+
         switch mode {
         case .japaneseToEnglish:
             bluetoothManager.translateJapaneseToEnglish(audioData: audioData)

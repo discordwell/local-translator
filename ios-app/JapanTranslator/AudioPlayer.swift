@@ -12,6 +12,9 @@ class AudioPlayer: NSObject, ObservableObject {
     private var audioQueue: [Data] = []
     private var isProcessingQueue: Bool = false
 
+    /// Last played audio for replay functionality
+    private var lastPlayedAudio: Data?
+
     override init() {
         super.init()
         setupAudioSession()
@@ -20,15 +23,30 @@ class AudioPlayer: NSObject, ObservableObject {
     private func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            // Use playback category with speaker override for maximum volume
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.overrideOutputAudioPort(.speaker)
             try session.setActive(true)
         } catch {
             print("Failed to setup audio session: \(error)")
         }
     }
 
+    /// Ensure audio plays through the loudspeaker at full volume
+    private func ensureLoudspeaker() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            print("Failed to set speaker output: \(error)")
+        }
+    }
+
     /// Play audio data (WAV format).
     func play(audioData: Data) {
+        // Store for replay
+        lastPlayedAudio = audioData
+
         // Add to queue
         audioQueue.append(audioData)
 
@@ -36,6 +54,20 @@ class AudioPlayer: NSObject, ObservableObject {
         if !isProcessingQueue {
             processQueue()
         }
+    }
+
+    /// Replay the last played audio
+    func replay() {
+        guard let audioData = lastPlayedAudio else {
+            print("No audio to replay")
+            return
+        }
+        play(audioData: audioData)
+    }
+
+    /// Check if there's audio available to replay
+    var canReplay: Bool {
+        return lastPlayedAudio != nil
     }
 
     private func processQueue() {
@@ -47,12 +79,16 @@ class AudioPlayer: NSObject, ObservableObject {
         isProcessingQueue = true
         let audioData = audioQueue.removeFirst()
 
+        // Ensure loudspeaker before playing
+        ensureLoudspeaker()
+
         do {
             audioPlayer = try AVAudioPlayer(data: audioData)
             audioPlayer?.delegate = self
+            audioPlayer?.volume = 1.0  // Maximum volume
             audioPlayer?.play()
             isPlaying = true
-            print("Playing audio (\(audioData.count) bytes)")
+            print("Playing audio (\(audioData.count) bytes) on speaker")
         } catch {
             print("Failed to play audio: \(error)")
             // Try next in queue

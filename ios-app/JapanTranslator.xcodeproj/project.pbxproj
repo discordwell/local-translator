@@ -286,7 +286,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = JapanTranslator/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Japan Translator";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Translator";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "This app uses Bluetooth to connect to the translation server on your Mac.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "This app uses Bluetooth to connect to the translation server on your Mac.";
@@ -321,7 +321,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = JapanTranslator/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Japan Translator";
+				INFOPLIST_KEY_CFBundleDisplayName = "Local Translator";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "This app uses Bluetooth to connect to the translation server on your Mac.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "This app uses Bluetooth to connect to the translation server on your Mac.";
