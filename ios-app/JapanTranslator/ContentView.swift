@@ -168,10 +168,24 @@ struct ContentView: View {
                     .foregroundColor(.red)
                     .font(.body)
             } else if isTranslating {
-                HStack {
-                    ProgressView()
-                    Text("Translating... / 翻訳中...")
-                        .foregroundColor(.secondary)
+                VStack(spacing: 12) {
+                    HStack {
+                        ProgressView()
+                        Text("Translating... / 翻訳中...")
+                            .foregroundColor(.secondary)
+                    }
+
+                    Button(action: {
+                        resetTranslation()
+                    }) {
+                        Text("Cancel / キャンセル")
+                            .font(.footnote)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(8)
+                    }
                 }
             } else if !translationText.isEmpty || !japaneseText.isEmpty {
                 // Show translation text
@@ -373,6 +387,13 @@ struct ContentView: View {
             bluetoothManager.translateEnglishToJapanese(audioData: audioData)
         }
         // Results will come via onChange handlers
+    }
+
+    private func resetTranslation() {
+        isTranslating = false
+        activeMode = nil
+        errorMessage = nil
+        audioRecorder.stopRecording()
     }
 }
 

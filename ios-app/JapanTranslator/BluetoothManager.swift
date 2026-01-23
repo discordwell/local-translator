@@ -75,7 +75,11 @@ class BluetoothManager: NSObject, ObservableObject {
 
     /// Send Japanese audio for translation to English text.
     func translateJapaneseToEnglish(audioData: Data) {
-        guard isConnected else { return }
+        guard isConnected else {
+            print("[DEBUG] Not connected - cannot translate JA->EN")
+            return
+        }
+        print("[DEBUG] Starting JA->EN translation with \(audioData.count) bytes")
 
         // Send command
         sendCommand(CMD_JA_TO_EN)
@@ -86,7 +90,11 @@ class BluetoothManager: NSObject, ObservableObject {
 
     /// Send English audio for translation to Japanese audio.
     func translateEnglishToJapanese(audioData: Data) {
-        guard isConnected else { return }
+        guard isConnected else {
+            print("[DEBUG] Not connected - cannot translate EN->JA")
+            return
+        }
+        print("[DEBUG] Starting EN->JA translation with \(audioData.count) bytes")
 
         // Send command
         sendCommand(CMD_EN_TO_JA)
@@ -96,28 +104,39 @@ class BluetoothManager: NSObject, ObservableObject {
     }
 
     private func sendCommand(_ command: UInt8) {
-        guard let char = commandCharacteristic, let peripheral = peripheral else { return }
+        guard let char = commandCharacteristic, let peripheral = peripheral else {
+            print("[DEBUG] Cannot send command - missing characteristic or peripheral")
+            return
+        }
 
         let data = Data([command])
+        print("[DEBUG] Sending command: \(command)")
         peripheral.writeValue(data, for: char, type: .withResponse)
     }
 
     private func sendAudio(_ audioData: Data) {
-        guard let char = audioInputCharacteristic, let peripheral = peripheral else { return }
+        guard let char = audioInputCharacteristic, let peripheral = peripheral else {
+            print("[DEBUG] Cannot send audio - missing characteristic or peripheral")
+            return
+        }
 
         let chunkSize = 512 // BLE MTU limit
+        print("[DEBUG] Sending \(audioData.count) bytes of audio in chunks of \(chunkSize)")
 
         // Send start command
         sendCommand(CMD_AUDIO_START)
 
-        // Send audio in chunks
+        // Send audio in chunks (withResponse ensures reliable delivery)
         var offset = 0
+        var chunkCount = 0
         while offset < audioData.count {
             let end = min(offset + chunkSize, audioData.count)
             let chunk = audioData[offset..<end]
             peripheral.writeValue(chunk, for: char, type: .withResponse)
             offset = end
+            chunkCount += 1
         }
+        print("[DEBUG] Sent \(chunkCount) audio chunks")
 
         // Send end command
         sendCommand(CMD_AUDIO_END)
@@ -248,14 +267,23 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
 
             // Check if we have all characteristics
+            print("[DEBUG] Characteristics found - audioInput: \(audioInputCharacteristic != nil), translationOutput: \(translationOutputCharacteristic != nil), audioOutput: \(audioOutputCharacteristic != nil), command: \(commandCharacteristic != nil)")
             if audioInputCharacteristic != nil &&
                translationOutputCharacteristic != nil &&
                audioOutputCharacteristic != nil &&
                commandCharacteristic != nil {
                 self.isConnected = true
                 self.statusMessage = "Connected to Mac"
-                print("All characteristics discovered, ready for translation")
+                print("[DEBUG] All characteristics discovered, ready for translation")
+            } else {
+                print("[DEBUG] Not all characteristics found yet")
             }
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            print("[DEBUG] Write error for \(characteristic.uuid): \(error.localizedDescription)")
         }
     }
 
@@ -287,7 +315,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             if data.count >= 5 {
                 expectedAudioSize = Int(data[1]) << 24 | Int(data[2]) << 16 | Int(data[3]) << 8 | Int(data[4])
                 audioReceiveBuffer = Data()
-                print("Audio transfer started, expecting \(expectedAudioSize) bytes")
+                print("[AUDIO] Transfer started, expecting \(expectedAudioSize) bytes")
             }
         case CMD_AUDIO_CHUNK:
             // Audio chunk
@@ -296,11 +324,22 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         case CMD_AUDIO_END:
             // End of audio
-            print("Audio transfer complete: \(audioReceiveBuffer.count) bytes")
-            receivedAudio = audioReceiveBuffer
-            audioReceiveBuffer = Data()
+            print("[AUDIO] Transfer complete: \(audioReceiveBuffer.count) bytes (expected \(expectedAudioSize))")
+            if audioReceiveBuffer.count > 0 {
+                print("[AUDIO] Setting receivedAudio property")
+                // Clear first to force SwiftUI onChange to fire
+                receivedAudio = nil
+                // Small delay to ensure the nil value propagates
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [self] in
+                    receivedAudio = audioReceiveBuffer
+                    audioReceiveBuffer = Data()
+                }
+            } else {
+                print("[AUDIO] ERROR: Buffer is empty!")
+                audioReceiveBuffer = Data()
+            }
         default:
-            break
+            print("[AUDIO] Unknown command: \(command)")
         }
     }
 }

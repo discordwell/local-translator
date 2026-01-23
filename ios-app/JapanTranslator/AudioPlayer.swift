@@ -23,8 +23,9 @@ class AudioPlayer: NSObject, ObservableObject {
     private func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            // Use playback category with speaker override for maximum volume
-            try session.setCategory(.playback, mode: .default, options: [])
+            // Use playAndRecord to allow both recording and playback
+            // defaultToSpeaker ensures playback uses the loudspeaker
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
             try session.overrideOutputAudioPort(.speaker)
             try session.setActive(true)
         } catch {
@@ -44,6 +45,8 @@ class AudioPlayer: NSObject, ObservableObject {
 
     /// Play audio data (WAV format).
     func play(audioData: Data) {
+        print("[PLAYER] play() called with \(audioData.count) bytes")
+
         // Store for replay
         lastPlayedAudio = audioData
 

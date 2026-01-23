@@ -148,10 +148,22 @@ def run_bluetooth_server():
                 print(f"Translation: {text}")
                 bt_server.sendTextResponse_(text)
             elif command == CMD_EN_TO_JA:
-                # English -> Japanese audio
-                audio = translator.translate_en_to_ja(audio_data)
+                # English -> Japanese audio + text
+                audio, japanese_text = translator.translate_en_to_ja(audio_data)
+                print(f"Japanese text: {japanese_text}")
                 print(f"Generated {len(audio)} bytes of Japanese audio")
-                bt_server.sendAudioResponse_(audio)
+
+                # Debug: save audio to file (commented out)
+                # debug_path = "/tmp/translation_audio.wav"
+                # with open(debug_path, "wb") as f:
+                #     f.write(audio)
+                # print(f"Saved audio to {debug_path}")
+
+                # Send text first
+                bt_server.sendTextResponse_(japanese_text)
+
+                # Schedule audio send via timer - lets runloop process BLE events properly
+                bt_server.scheduleAudioSend_(audio)
         except Exception as e:
             print(f"Translation error: {e}")
             bt_server.sendTextResponse_(f"Error: {str(e)}")

@@ -44,16 +44,50 @@ class Translator:
 
         # Load processor and model
         self.processor = AutoProcessor.from_pretrained(self.model_name)
-        self.model = SeamlessM4Tv2Model.from_pretrained(self.model_name)
+
+        # Use float16 for faster inference on GPU (MPS/CUDA)
+        dtype = torch.float16 if self.device.type in ("mps", "cuda") else torch.float32
+        print(f"Loading model with dtype: {dtype}")
+
+        self.model = SeamlessM4Tv2Model.from_pretrained(
+            self.model_name,
+            torch_dtype=dtype
+        )
         self.model = self.model.to(self.device)
         self.model.eval()
 
         self._loaded = True
         print("Model loaded successfully")
 
+        # Warmup: run dummy inference to pre-compile MPS/CUDA kernels
+        print("Warming up model...")
+        self._warmup()
+        print("Warmup complete")
+
     @property
     def is_loaded(self) -> bool:
         return self._loaded
+
+    def _clear_cache(self):
+        """Clear GPU memory cache to prevent accumulation."""
+        if self.device.type == "mps":
+            torch.mps.empty_cache()
+        elif self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    def _warmup(self):
+        """Run dummy inference to pre-compile kernels."""
+        dummy_audio = np.zeros(16000, dtype=np.float32)  # 1 second of silence
+        inputs = self.processor(
+            audio=dummy_audio,
+            sampling_rate=16000,
+            return_tensors="pt"
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        with torch.inference_mode():
+            _ = self.model.generate(**inputs, tgt_lang="eng", generate_speech=False)
+        del inputs
+        self._clear_cache()
 
     def _load_audio(self, audio_bytes: bytes) -> tuple[np.ndarray, int]:
         """Load audio from bytes and return (waveform, sample_rate)."""
@@ -75,6 +109,19 @@ class Translator:
         num_samples = int(len(waveform) * target_sr / orig_sr)
         resampled = signal.resample(waveform, num_samples)
         return resampled
+
+    def _preprocess_audio(self, waveform: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+        """Apply preprocessing to improve translation quality."""
+        # Normalize audio level (peak normalization to -1dB)
+        max_val = np.abs(waveform).max()
+        if max_val > 0:
+            waveform = (waveform / max_val) * 0.89
+
+        # High-pass filter to remove low-frequency noise (80 Hz cutoff)
+        sos = signal.butter(N=5, Wn=80, btype='high', fs=sample_rate, output='sos')
+        waveform = signal.sosfilt(sos, waveform)
+
+        return waveform.astype(np.float32)
 
     def translate_ja_to_en(self, audio_bytes: bytes) -> str:
         """
@@ -101,21 +148,28 @@ class Translator:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        # Generate text translation (speech-to-text)
-        with torch.no_grad():
-            output_tokens = self.model.generate(
-                **inputs,
-                tgt_lang="eng",
-                generate_speech=False,
+        try:
+            # Generate text translation (speech-to-text)
+            with torch.inference_mode():
+                output_tokens = self.model.generate(
+                    **inputs,
+                    tgt_lang="eng",
+                    generate_speech=False,
+                )
+
+            # Decode tokens to text
+            text = self.processor.decode(
+                output_tokens[0][0],
+                skip_special_tokens=True
             )
 
-        # Decode tokens to text
-        text = self.processor.decode(
-            output_tokens[0].tolist()[0],
-            skip_special_tokens=True
-        )
-
-        return text
+            return text
+        finally:
+            # Clean up tensors to prevent memory leak
+            del inputs
+            if 'output_tokens' in locals():
+                del output_tokens
+            self._clear_cache()
 
     def translate_en_to_ja(self, audio_bytes: bytes) -> tuple[bytes, str]:
         """
@@ -142,37 +196,44 @@ class Translator:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        # Generate Japanese speech (speech-to-speech)
-        with torch.no_grad():
-            output = self.model.generate(
-                **inputs,
-                tgt_lang="jpn",
-                generate_speech=True,
-                return_intermediate_token_ids=True,
-            )
+        try:
+            # Generate Japanese speech
+            with torch.inference_mode():
+                output = self.model.generate(
+                    **inputs,
+                    tgt_lang="jpn",
+                    generate_speech=True,
+                    return_intermediate_token_ids=True,
+                )
 
-        # Extract the intermediate Japanese text if available
-        japanese_text = ""
-        if output.sequences is not None:
-            try:
-                japanese_text = self.processor.decode(output.sequences[0].tolist(), skip_special_tokens=True)
-                print(f"Japanese text: {japanese_text}")
-            except Exception as e:
-                print(f"Could not decode text: {e}")
+            # Extract the intermediate Japanese text if available
+            japanese_text = ""
+            if output.sequences is not None:
+                try:
+                    japanese_text = self.processor.decode(output.sequences[0], skip_special_tokens=True)
+                except Exception:
+                    pass
 
-        # Extract audio waveform from output
-        # SeamlessM4Tv2GenerationOutput has .waveform attribute
-        audio_array = output.waveform.cpu().numpy().squeeze()
+            # Extract audio waveform from output (convert to float32 for WAV compatibility)
+            audio_array = output.waveform.cpu().float().numpy().squeeze()
 
-        # The model outputs at 16kHz sample rate
-        output_sample_rate = self.model.config.sampling_rate
+            # The model outputs at 16kHz sample rate
+            output_sample_rate = self.model.config.sampling_rate
 
-        # Convert to WAV bytes
-        audio_io = io.BytesIO()
-        sf.write(audio_io, audio_array, output_sample_rate, format='WAV')
-        audio_io.seek(0)
+            # Convert to WAV bytes
+            audio_io = io.BytesIO()
+            sf.write(audio_io, audio_array, output_sample_rate, format='WAV')
+            audio_io.seek(0)
+            audio_data = audio_io.read()
+            audio_io.close()
 
-        return audio_io.read(), japanese_text
+            return audio_data, japanese_text
+        finally:
+            # Clean up tensors to prevent memory leak
+            del inputs
+            if 'output' in locals():
+                del output
+            self._clear_cache()
 
 
 # Global translator instance
