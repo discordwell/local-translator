@@ -2,6 +2,15 @@
 
 Offline Japanese-English speech translation powered by Meta's SeamlessM4T model. Runs entirely on your local network with no cloud dependencies.
 
+## Note
+
+I built this as a personal tool for my own use. The iOS app is not on the App Store. If you want to use this, you'll need:
+
+- A Mac to run the server
+- Xcode installed on that Mac
+- An Apple Developer account (free tier works) to sign and install the iOS app on your iPhone
+- Comfort with building iOS apps from source
+
 ## Features
 
 - **Japanese → English**: Speak Japanese, get English text
