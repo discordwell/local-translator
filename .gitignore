@@ -61,3 +61,8 @@ DerivedData/
 # Logs
 *.log
 ios-app/build/
+
+# Misc images
+*.jpeg
+*.png
+comparison.png
