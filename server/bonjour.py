@@ -1,8 +1,9 @@
 """
-Bonjour/mDNS service advertisement for the Japan Translator server.
+Bonjour/mDNS service advertisement for the Local Translator server.
 
 Advertises the service as _jptranslate._tcp.local. so that the iPhone app
-can automatically discover the server on the local network.
+can automatically discover the server on the local network. The service type
+is part of the wire contract with the iOS client and must not change.
 """
 
 import socket
@@ -14,7 +15,7 @@ class BonjourService:
     """Manages Bonjour service advertisement."""
 
     SERVICE_TYPE = "_jptranslate._tcp.local."
-    SERVICE_NAME = "Japan Translator._jptranslate._tcp.local."
+    SERVICE_NAME = "Local Translator._jptranslate._tcp.local."
 
     def __init__(self, port: int):
         self.port = port
@@ -61,9 +62,9 @@ class BonjourService:
             port=self.port,
             properties={
                 "version": "1.0",
-                "name": "Japan Translator Server",
+                "name": "Local Translator Server",
             },
-            server=f"jptranslate.local.",
+            server="jptranslate.local.",
         )
 
         # Register the service in a separate thread to avoid blocking asyncio

@@ -1,0 +1,7 @@
+# Development / test dependencies (not required to run the server).
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest
+#
+pytest
+httpx  # required by fastapi.testclient.TestClient

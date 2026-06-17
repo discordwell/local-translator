@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Japan Translator Server - Launch Script
+# Local Translator Server - Launch Script
 #
 # This script sets up the environment and runs the translation server.
 # Optimized for M4 Max MacBook with MPS (Metal) acceleration.
@@ -28,7 +28,7 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1
 export TRANSFORMERS_OFFLINE=0  # Set to 1 after first run for offline mode
 
 echo "========================================"
-echo "  Japan Translator Server"
+echo "  Local Translator Server"
 echo "  日本語翻訳サーバー"
 echo "========================================"
 echo ""

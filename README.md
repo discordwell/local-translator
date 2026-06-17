@@ -30,6 +30,8 @@ I built this as a personal tool for my own use. The iOS app is not on the App St
 
 The Mac runs a Python server with the SeamlessM4T v2 Large model. The iOS app records audio, sends it to the server, and displays/plays the translation results.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the module layout and the WiFi/BLE wire contracts.
+
 ## Requirements
 
 ### Server (Mac)
@@ -38,7 +40,7 @@ The Mac runs a Python server with the SeamlessM4T v2 Large model. The iOS app re
 - Python 3.9+
 - Apple Silicon (M1/M2/M3) recommended for GPU acceleration
 - 16GB+ RAM
-- ~14GB disk space (model downloads on first run)
+- ~9GB disk space (model downloads on first run)
 
 ### iOS App
 
@@ -66,7 +68,7 @@ Start in Bluetooth mode (no WiFi needed):
 python main.py --bluetooth
 ```
 
-The first run downloads the SeamlessM4T model (~14GB) which takes several minutes.
+The first run downloads the SeamlessM4T model (~9GB) which takes several minutes.
 
 ### iOS App
 
@@ -118,6 +120,19 @@ Model loads once at startup (~30 seconds on Apple Silicon).
 - **Audio format**: 16kHz mono PCM WAV
 - **Bluetooth**: BLE with 182-byte chunked notifications
 - **WiFi**: FastAPI server with multipart form upload
+
+## Development
+
+Run the server test suite (does not download or load the model):
+
+```bash
+cd server
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+Tests cover the BLE framing protocol, the audio helpers, and the HTTP endpoints
+(via a fake translator). See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## License
 

@@ -1,14 +1,13 @@
 """
-Bluetooth LE server for Japan Translator.
+Bluetooth LE server for Local Translator.
 
 The Mac acts as a BLE peripheral, advertising a translation service.
 The iPhone connects as a BLE central and sends/receives audio data.
 
-BLE has limited MTU (~512 bytes), so we chunk audio data for transfer.
+A BLE notification only carries a small payload, so audio is chunked for
+transfer. The wire format (UUIDs, commands, framing) lives in ``ble_protocol``
+so it can be unit-tested without CoreBluetooth.
 """
-
-import struct
-from typing import Optional, Callable
 
 import objc
 from Foundation import NSObject, NSData
@@ -29,24 +28,21 @@ from CoreBluetooth import (
     CBManagerStatePoweredOn,
 )
 
-# Service and Characteristic UUIDs
-SERVICE_UUID = "12345678-1234-1234-1234-123456789ABC"
-# Characteristic for sending audio TO the Mac (Japanese audio for JA->EN)
-AUDIO_INPUT_UUID = "12345678-1234-1234-1234-123456789001"
-# Characteristic for receiving translation results FROM the Mac
-TRANSLATION_OUTPUT_UUID = "12345678-1234-1234-1234-123456789002"
-# Characteristic for receiving audio FROM the Mac (Japanese audio for EN->JA)
-AUDIO_OUTPUT_UUID = "12345678-1234-1234-1234-123456789003"
-# Characteristic for sending commands (translation mode, etc.)
-COMMAND_UUID = "12345678-1234-1234-1234-123456789004"
-
-# Commands
-CMD_JA_TO_EN = 0x01  # Japanese speech -> English text
-CMD_EN_TO_JA = 0x02  # English speech -> Japanese speech
-CMD_AUDIO_START = 0x10  # Start of audio data
-CMD_AUDIO_CHUNK = 0x11  # Audio data chunk
-CMD_AUDIO_END = 0x12    # End of audio data
-CMD_TEST_AUDIO = 0xFF   # Test: send sample audio without needing voice input
+import ble_protocol
+# Re-export protocol constants so existing importers (e.g. main.py) keep working.
+from ble_protocol import (
+    SERVICE_UUID,
+    AUDIO_INPUT_UUID,
+    TRANSLATION_OUTPUT_UUID,
+    AUDIO_OUTPUT_UUID,
+    COMMAND_UUID,
+    CMD_JA_TO_EN,
+    CMD_EN_TO_JA,
+    CMD_AUDIO_START,
+    CMD_AUDIO_CHUNK,
+    CMD_AUDIO_END,
+    CMD_TEST_AUDIO,
+)
 
 
 class BluetoothServer(NSObject):
@@ -115,8 +111,7 @@ class BluetoothServer(NSObject):
             print("Cannot send audio - no characteristic or peripheral manager")
             return
 
-        chunk_size = 182  # BLE notification chunk size
-        total_chunks = (len(audio_data) + chunk_size - 1) // chunk_size
+        total_chunks = ble_protocol.chunk_count(len(audio_data))
         print(f"Sending {len(audio_data)} bytes in {total_chunks} chunks...")
 
         sent_count = 0
@@ -163,16 +158,14 @@ class BluetoothServer(NSObject):
                 return False
 
         # Send start marker with total size
-        # print(f"[AUDIO] Sending on characteristic UUID: {self._audio_output_char.UUID().UUIDString()}")
-        start_marker = struct.pack('>BI', CMD_AUDIO_START, len(audio_data))
-        # print(f"[AUDIO] START marker: {start_marker.hex()} (cmd={CMD_AUDIO_START}, size={len(audio_data)})")
+        start_marker = ble_protocol.encode_start(len(audio_data))
         ns_data = NSData.dataWithBytes_length_(start_marker, len(start_marker))
         send_notification(ns_data)
         pump(0.01)
 
         # Send audio chunks with pacing
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = bytes([CMD_AUDIO_CHUNK]) + audio_data[i:i + chunk_size]
+        for i in range(0, len(audio_data), ble_protocol.CHUNK_SIZE):
+            chunk = ble_protocol.encode_chunk(audio_data[i:i + ble_protocol.CHUNK_SIZE])
             ns_data = NSData.dataWithBytes_length_(chunk, len(chunk))
             send_notification(ns_data)
             pump(0.01)  # 10ms between each chunk
@@ -180,8 +173,7 @@ class BluetoothServer(NSObject):
         pump(0.02)
 
         # Send end marker
-        end_marker = bytes([CMD_AUDIO_END])
-        # print(f"[AUDIO] END marker: {end_marker.hex()} (cmd={CMD_AUDIO_END})")
+        end_marker = ble_protocol.encode_end()
         ns_data = NSData.dataWithBytes_length_(end_marker, len(end_marker))
         send_notification(ns_data)
 

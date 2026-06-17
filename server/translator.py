@@ -111,7 +111,12 @@ class Translator:
         return resampled
 
     def _preprocess_audio(self, waveform: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
-        """Apply preprocessing to improve translation quality."""
+        """Optional speech cleanup (peak-normalize + 80 Hz high-pass).
+
+        Not currently applied in the inference path: SeamlessM4T's processor
+        already normalizes its inputs, so this is kept as an opt-in helper for
+        experimenting with noisy-audio handling rather than wired in by default.
+        """
         # Normalize audio level (peak normalization to -1dB)
         max_val = np.abs(waveform).max()
         if max_val > 0:
@@ -136,7 +141,7 @@ class Translator:
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
-        # Load and preprocess audio
+        # Load and resample audio
         waveform, sample_rate = self._load_audio(audio_bytes)
         waveform = self._resample_audio(waveform, sample_rate, 16000)
 
@@ -184,7 +189,7 @@ class Translator:
         if not self._loaded:
             raise RuntimeError("Model not loaded. Call load() first.")
 
-        # Load and preprocess audio
+        # Load and resample audio
         waveform, sample_rate = self._load_audio(audio_bytes)
         waveform = self._resample_audio(waveform, sample_rate, 16000)
 

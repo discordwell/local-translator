@@ -1,5 +1,5 @@
 """
-Japan Translator Server - FastAPI application.
+Local Translator Server - FastAPI application.
 
 Provides HTTP endpoints for Japanese ↔ English translation using SeamlessM4T.
 Supports both WiFi (Bonjour) and Bluetooth LE connections.
@@ -7,8 +7,8 @@ Supports both WiFi (Bonjour) and Bluetooth LE connections.
 
 import os
 import sys
-import threading
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import Response
@@ -26,7 +26,7 @@ USE_BLUETOOTH = os.environ.get("USE_BLUETOOTH", "0") == "1"
 async def lifespan(app: FastAPI):
     """Manage application lifecycle - load model and start Bonjour on startup."""
     # Startup
-    print("Starting Japan Translator Server...")
+    print("Starting Local Translator Server...")
 
     # Load the translation model
     translator = get_translator()
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Japan Translator Server",
+    title="Local Translator Server",
     description="Japanese ↔ English translation API using SeamlessM4T",
     version="1.0.0",
     lifespan=lifespan,
@@ -112,13 +112,19 @@ async def translate_english_to_japanese(audio: UploadFile = File(...)):
         # Read audio data
         audio_bytes = await audio.read()
 
-        # Translate to Japanese audio
-        japanese_audio = translator.translate_en_to_ja(audio_bytes)
+        # Translate to Japanese audio. translate_en_to_ja returns both the
+        # synthesized audio and the intermediate Japanese text.
+        japanese_audio, japanese_text = translator.translate_en_to_ja(audio_bytes)
 
         return Response(
             content=japanese_audio,
             media_type="audio/wav",
-            headers={"Content-Disposition": "attachment; filename=translation.wav"},
+            headers={
+                "Content-Disposition": "attachment; filename=translation.wav",
+                # HTTP headers must be latin-1 safe, so percent-encode the
+                # UTF-8 Japanese text. Clients can opt in to display it.
+                "X-Translation-Text": quote(japanese_text or ""),
+            },
         )
 
     except Exception as e:
@@ -173,7 +179,7 @@ def run_bluetooth_server():
     bt_server.start()
 
     print("\nBluetooth server running. Press Ctrl+C to stop.")
-    print("On your iPhone, open the Japan Translator app.")
+    print("On your iPhone, open the Local Translator app.")
     print("It will connect automatically via Bluetooth.\n")
 
     # Run the macOS event loop (required for CoreBluetooth)

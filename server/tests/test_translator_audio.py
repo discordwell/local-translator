@@ -1,0 +1,78 @@
+"""Tests for Translator audio helpers (no model load required)."""
+
+import io
+
+import numpy as np
+import soundfile as sf
+import pytest
+
+from translator import Translator, get_translator
+
+
+@pytest.fixture
+def tr():
+    # The audio helpers don't touch the model, so an unloaded instance is fine.
+    return Translator()
+
+
+def _wav_bytes(waveform, sample_rate):
+    buf = io.BytesIO()
+    sf.write(buf, waveform, sample_rate, format="WAV")
+    return buf.getvalue()
+
+
+def test_load_audio_mono(tr):
+    sr = 16000
+    wave = np.sin(2 * np.pi * 440 * np.linspace(0, 1, sr, endpoint=False)).astype(np.float32)
+    waveform, out_sr = tr._load_audio(_wav_bytes(wave, sr))
+    assert out_sr == sr
+    assert waveform.ndim == 1
+    assert waveform.shape[0] == sr
+
+
+def test_load_audio_downmixes_stereo(tr):
+    sr = 16000
+    n = 8000
+    left = np.full(n, 0.5, dtype=np.float32)
+    right = np.full(n, -0.5, dtype=np.float32)
+    stereo = np.stack([left, right], axis=1)
+    waveform, _ = tr._load_audio(_wav_bytes(stereo, sr))
+    assert waveform.ndim == 1
+    assert waveform.shape[0] == n
+    # Average of +0.5 and -0.5 is ~0 (allowing for 16-bit quantization).
+    assert np.allclose(waveform, 0.0, atol=1e-3)
+
+
+def test_resample_noop_when_rates_match(tr):
+    wave = np.linspace(0, 1, 1000).astype(np.float32)
+    out = tr._resample_audio(wave, 16000, 16000)
+    assert out is wave
+
+
+def test_resample_downsamples_length(tr):
+    out = tr._resample_audio(np.zeros(48000, dtype=np.float32), 48000, 16000)
+    assert len(out) == 16000
+
+
+def test_resample_upsamples_length(tr):
+    out = tr._resample_audio(np.zeros(8000, dtype=np.float32), 8000, 16000)
+    assert len(out) == 16000
+
+
+def test_preprocess_boosts_quiet_signal(tr):
+    quiet = (np.sin(2 * np.pi * 200 * np.linspace(0, 1, 16000, endpoint=False)) * 0.1).astype(np.float32)
+    out = tr._preprocess_audio(quiet, 16000)
+    assert out.dtype == np.float32
+    peak = float(np.abs(out).max())
+    # Quiet 0.1-amplitude input is normalized up toward ~0.89.
+    assert 0.5 < peak < 1.3
+
+
+def test_preprocess_handles_silence(tr):
+    out = tr._preprocess_audio(np.zeros(16000, dtype=np.float32), 16000)
+    assert out.dtype == np.float32
+    assert np.all(out == 0.0)
+
+
+def test_get_translator_is_singleton():
+    assert get_translator() is get_translator()
