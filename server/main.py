@@ -5,21 +5,52 @@ Provides HTTP endpoints for Japanese ↔ English translation using SeamlessM4T.
 Supports both WiFi (Bonjour) and Bluetooth LE connections.
 """
 
+import asyncio
 import os
 import sys
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
-from translator import get_translator
-from bonjour import get_bonjour_service
+from translator import get_translator, AudioDecodeError
 
 
 # Server configuration
 PORT = int(os.environ.get("PORT", 8000))
 USE_BLUETOOTH = os.environ.get("USE_BLUETOOTH", "0") == "1"
+
+
+# Serializes model inference so concurrent requests never run two generate()
+# calls against the single shared model/GPU at once. Created lazily on first use
+# (inside the running event loop) rather than at import time, so it binds to the
+# server's loop — important on Python 3.9 where asyncio.Lock binds at creation.
+_inference_lock = None
+
+
+def _get_inference_lock() -> asyncio.Lock:
+    global _inference_lock
+    if _inference_lock is None:
+        _inference_lock = asyncio.Lock()
+    return _inference_lock
+
+
+async def _run_inference(call):
+    """Run a blocking translator call off the event loop, serialized.
+
+    ``run_in_threadpool`` keeps the event loop responsive (e.g. /health) while
+    the CPU/GPU-bound model runs; the lock ensures only one inference at a time.
+    ``AudioDecodeError`` (bad input) maps to HTTP 400; anything else to 500.
+    """
+    try:
+        async with _get_inference_lock():
+            return await run_in_threadpool(call)
+    except AudioDecodeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
 
 @asynccontextmanager
@@ -32,7 +63,10 @@ async def lifespan(app: FastAPI):
     translator = get_translator()
     translator.load()
 
-    # Start Bonjour advertisement
+    # Start Bonjour advertisement. Imported here (not at module load) so the app
+    # — and the endpoint unit tests — don't require zeroconf just to import.
+    from bonjour import get_bonjour_service
+
     bonjour = get_bonjour_service(PORT)
     bonjour.start()
 
@@ -79,17 +113,14 @@ async def translate_japanese_to_english(audio: UploadFile = File(...)):
     if not translator.is_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    try:
-        # Read audio data
-        audio_bytes = await audio.read()
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload")
 
-        # Translate
-        english_text = translator.translate_ja_to_en(audio_bytes)
-
-        return {"text": english_text}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+    english_text = await _run_inference(
+        lambda: translator.translate_ja_to_en(audio_bytes)
+    )
+    return {"text": english_text}
 
 
 @app.post("/translate/en-to-ja")
@@ -108,27 +139,26 @@ async def translate_english_to_japanese(audio: UploadFile = File(...)):
     if not translator.is_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    try:
-        # Read audio data
-        audio_bytes = await audio.read()
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload")
 
-        # Translate to Japanese audio. translate_en_to_ja returns both the
-        # synthesized audio and the intermediate Japanese text.
-        japanese_audio, japanese_text = translator.translate_en_to_ja(audio_bytes)
+    # translate_en_to_ja returns both the synthesized audio and the
+    # intermediate Japanese text.
+    japanese_audio, japanese_text = await _run_inference(
+        lambda: translator.translate_en_to_ja(audio_bytes)
+    )
 
-        return Response(
-            content=japanese_audio,
-            media_type="audio/wav",
-            headers={
-                "Content-Disposition": "attachment; filename=translation.wav",
-                # HTTP headers must be latin-1 safe, so percent-encode the
-                # UTF-8 Japanese text. Clients can opt in to display it.
-                "X-Translation-Text": quote(japanese_text or ""),
-            },
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+    return Response(
+        content=japanese_audio,
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": "attachment; filename=translation.wav",
+            # HTTP headers must be latin-1 safe, so percent-encode the
+            # UTF-8 Japanese text. Clients can opt in to display it.
+            "X-Translation-Text": quote(japanese_text or ""),
+        },
+    )
 
 
 def run_bluetooth_server():

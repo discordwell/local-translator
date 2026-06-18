@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
+from translator import AudioDecodeError
 
 
 class FakeTranslator:
@@ -49,6 +50,10 @@ def _wav_upload():
     return {"audio": ("audio.wav", io.BytesIO(b"RIFFdummy"), "audio/wav")}
 
 
+def _empty_upload():
+    return {"audio": ("audio.wav", io.BytesIO(b""), "audio/wav")}
+
+
 def test_health_ok(client, monkeypatch):
     _use(monkeypatch, FakeTranslator(loaded=True))
     r = client.get("/health")
@@ -83,6 +88,21 @@ def test_ja_to_en_500_on_translation_error(client, monkeypatch):
     assert "Translation failed" in r.json()["detail"]
 
 
+def test_ja_to_en_400_on_empty_upload(client, monkeypatch):
+    _use(monkeypatch, FakeTranslator(loaded=True))
+    r = client.post("/translate/ja-to-en", files=_empty_upload())
+    assert r.status_code == 400
+    assert "Empty" in r.json()["detail"]
+
+
+def test_ja_to_en_400_on_undecodable_audio(client, monkeypatch):
+    # AudioDecodeError (bad input) is a client error, not a 500.
+    _use(monkeypatch, FakeTranslator(raises=AudioDecodeError("bad wav")))
+    r = client.post("/translate/ja-to-en", files=_wav_upload())
+    assert r.status_code == 400
+    assert r.json()["detail"] == "bad wav"
+
+
 def test_en_to_ja_returns_audio_and_text_header(client, monkeypatch):
     """Regression test: en-to-ja must unpack (audio, text), not return the tuple."""
     fake = FakeTranslator(en_ja=(b"RIFF-fake-wav-bytes", "こんにちは"))
@@ -106,3 +126,68 @@ def test_en_to_ja_500_on_translation_error(client, monkeypatch):
     r = client.post("/translate/en-to-ja", files=_wav_upload())
     assert r.status_code == 500
     assert "Translation failed" in r.json()["detail"]
+
+
+def test_en_to_ja_400_on_empty_upload(client, monkeypatch):
+    _use(monkeypatch, FakeTranslator(loaded=True))
+    r = client.post("/translate/en-to-ja", files=_empty_upload())
+    assert r.status_code == 400
+    assert "Empty" in r.json()["detail"]
+
+
+def test_en_to_ja_400_on_undecodable_audio(client, monkeypatch):
+    _use(monkeypatch, FakeTranslator(raises=AudioDecodeError("bad wav")))
+    r = client.post("/translate/en-to-ja", files=_wav_upload())
+    assert r.status_code == 400
+    assert r.json()["detail"] == "bad wav"
+
+
+def test_inference_is_serialized(monkeypatch):
+    """Concurrent translations must not run two model calls at once.
+
+    The endpoints offload inference to a threadpool (keeping the event loop free)
+    but a lock serializes the calls, so the single shared model/GPU is never hit
+    by two ``generate()`` calls simultaneously. A fake translator records the
+    peak number of concurrent in-flight calls; with the lock it must be 1.
+    """
+    import asyncio
+    import threading
+    import time
+
+    import httpx
+
+    # Use a fresh inference lock bound to THIS test's event loop (and let
+    # monkeypatch discard it afterward), so the module-global never leaks a
+    # binding to a closed loop between tests.
+    monkeypatch.setattr(main, "_inference_lock", None)
+
+    state = {"active": 0, "max_active": 0}
+    guard = threading.Lock()
+
+    class SlowFake:
+        is_loaded = True
+
+        def load(self):
+            pass
+
+        def translate_ja_to_en(self, audio_bytes):
+            with guard:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.02)  # long enough for overlap to occur if unserialized
+            with guard:
+                state["active"] -= 1
+            return "ok"
+
+    _use(monkeypatch, SlowFake())
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await asyncio.gather(
+                *(c.post("/translate/ja-to-en", files=_wav_upload()) for _ in range(4))
+            )
+
+    results = asyncio.run(scenario())
+    assert all(r.status_code == 200 for r in results)
+    assert state["max_active"] == 1

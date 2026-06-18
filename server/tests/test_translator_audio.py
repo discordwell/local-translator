@@ -6,7 +6,7 @@ import numpy as np
 import soundfile as sf
 import pytest
 
-from translator import Translator, get_translator
+from translator import Translator, get_translator, AudioDecodeError
 
 
 @pytest.fixture
@@ -41,6 +41,23 @@ def test_load_audio_downmixes_stereo(tr):
     assert waveform.shape[0] == n
     # Average of +0.5 and -0.5 is ~0 (allowing for 16-bit quantization).
     assert np.allclose(waveform, 0.0, atol=1e-3)
+
+
+def test_load_audio_rejects_empty_bytes(tr):
+    with pytest.raises(AudioDecodeError):
+        tr._load_audio(b"")
+
+
+def test_load_audio_rejects_garbage(tr):
+    with pytest.raises(AudioDecodeError):
+        tr._load_audio(b"this is definitely not a wav file")
+
+
+def test_load_audio_rejects_zero_sample_wav(tr):
+    # A structurally valid WAV with no samples must not reach the model.
+    empty_wav = _wav_bytes(np.zeros(0, dtype=np.float32), 16000)
+    with pytest.raises(AudioDecodeError):
+        tr._load_audio(empty_wav)
 
 
 def test_resample_noop_when_rates_match(tr):

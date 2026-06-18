@@ -131,8 +131,10 @@ pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
-Tests cover the BLE framing protocol, the audio helpers, and the HTTP endpoints
-(via a fake translator). See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+Tests cover the BLE framing protocol, the audio helpers (including bad-audio
+rejection), and the HTTP endpoints via a fake translator — success paths, the
+400/503/500 error codes, and inference serialization. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## License
 

@@ -14,6 +14,14 @@ from scipy import signal
 from transformers import AutoProcessor, SeamlessM4Tv2Model
 
 
+class AudioDecodeError(ValueError):
+    """Raised when the supplied audio bytes can't be decoded into a waveform.
+
+    This is a *client* error (bad/unsupported/empty audio), distinct from an
+    internal failure during inference. Callers map it to an HTTP 400.
+    """
+
+
 class Translator:
     """Wrapper for SeamlessM4T model with MPS acceleration."""
 
@@ -90,13 +98,27 @@ class Translator:
         self._clear_cache()
 
     def _load_audio(self, audio_bytes: bytes) -> tuple[np.ndarray, int]:
-        """Load audio from bytes and return (waveform, sample_rate)."""
-        audio_io = io.BytesIO(audio_bytes)
-        waveform, sample_rate = sf.read(audio_io)
+        """Load audio from bytes and return (waveform, sample_rate).
+
+        Raises ``AudioDecodeError`` if the bytes aren't a decodable audio file
+        or contain no samples, so callers can distinguish bad input (HTTP 400)
+        from an internal inference failure (HTTP 500).
+        """
+        try:
+            waveform, sample_rate = sf.read(io.BytesIO(audio_bytes))
+        except Exception as e:
+            # soundfile raises LibsndfileError (a RuntimeError) whose message
+            # leaks the BytesIO repr; surface a clean, client-safe message.
+            raise AudioDecodeError(
+                "Could not decode audio; expected a valid WAV file"
+            ) from e
 
         # Convert stereo to mono if needed
-        if len(waveform.shape) > 1:
+        if waveform.ndim > 1:
             waveform = waveform.mean(axis=1)
+
+        if waveform.size == 0:
+            raise AudioDecodeError("Audio contains no samples")
 
         return waveform, sample_rate
 
@@ -162,9 +184,12 @@ class Translator:
                     generate_speech=False,
                 )
 
-            # Decode tokens to text
+            # With generate_speech=False the model returns a ModelOutput whose
+            # first field is `sequences` (shape [batch, seq_len]); decode the
+            # single batch row. (output_tokens[0][0] is equivalent but relies on
+            # ModelOutput's positional indexing.)
             text = self.processor.decode(
-                output_tokens[0][0],
+                output_tokens.sequences[0],
                 skip_special_tokens=True
             )
 

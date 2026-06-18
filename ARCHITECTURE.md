@@ -35,7 +35,9 @@ Audio is 16 kHz mono PCM WAV. The server resamples any other input rate.
 | `ble_protocol.py`     | Pure-Python BLE wire contract: UUIDs, command bytes, and the audio framing/reassembly helpers. No CoreBluetooth import, so it is unit-testable anywhere. |
 
 `main.py` imports `bluetooth_server` lazily (only in `--bluetooth` mode), so the
-WiFi path never needs CoreBluetooth.
+WiFi path never needs CoreBluetooth. Likewise `bonjour` is imported inside the
+startup lifespan rather than at module load, so importing the app (e.g. for the
+endpoint tests) doesn't require `zeroconf`.
 
 ## WiFi transport (HTTP)
 
@@ -51,6 +53,22 @@ The `X-Translation-Text` header carries the intermediate Japanese text. HTTP
 headers are latin-1 only, so the UTF-8 text is **percent-encoded**; clients
 percent-decode it. (`en-to-ja` returns both audio and text; the header is how
 the WiFi transport delivers the text alongside the audio body.)
+
+**Error responses** distinguish the caller's fault from the server's:
+
+| Status | When |
+|--------|------|
+| `400`  | Empty upload, or audio that can't be decoded (`AudioDecodeError`) |
+| `503`  | Model not loaded yet |
+| `500`  | Anything else that fails during inference |
+
+**Concurrency.** The two translate endpoints are `async def`, but inference is
+CPU/GPU-bound and blocking, so each call is offloaded with
+`run_in_threadpool` — this keeps the event loop responsive (e.g. `/health`
+answers while a translation runs). A process-wide `asyncio.Lock` then
+serializes inference so the single shared model/GPU is never hit by two
+`generate()` calls at once. The lock is created lazily inside the running loop
+(not at import) so it binds to the server's event loop.
 
 Discovery: the app browses for `_jptranslate._tcp` via `NWBrowser`, resolves the
 first instance, and uses its address/port. The service *type* is part of the
@@ -107,9 +125,12 @@ processor already normalizes its inputs.
 Server tests live in `server/tests/` and run without loading the model:
 
 - `test_ble_protocol.py` — framing/reassembly round-trips and edge cases.
-- `test_translator_audio.py` — audio decode/resample/preprocess helpers.
+- `test_translator_audio.py` — audio decode/resample/preprocess helpers,
+  including `AudioDecodeError` on empty/garbage/zero-sample input.
 - `test_api.py` — FastAPI endpoints with a fake translator (the `TestClient` is
-  created without its context manager so the model-loading lifespan never runs).
+  created without its context manager so the model-loading lifespan never runs):
+  success paths, the 400/503/500 error taxonomy, and a concurrency test
+  (via `httpx.AsyncClient`) asserting inference is serialized to one call at a time.
 
 ```bash
 cd server
