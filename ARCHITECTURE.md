@@ -45,14 +45,23 @@ FastAPI app served by uvicorn on port `8000` (override with `PORT`).
 
 | Method & path             | Request                       | Response |
 |---------------------------|-------------------------------|----------|
-| `GET /health`             | —                             | `{"status": "ok", "model_loaded": <bool>}` |
+| `GET /health`             | —                             | `{"status": "ok", "model_loaded": <bool>, "device": <str\|null>, "model": <str>}` |
 | `POST /translate/ja-to-en`| multipart `audio` (WAV)       | `{"text": "<english>"}` |
 | `POST /translate/en-to-ja`| multipart `audio` (WAV)       | WAV body (`audio/wav`) + `X-Translation-Text` header |
+
+`/health`'s `device` (`"mps"`/`"cuda"`/`"cpu"`, or `null` before the model
+loads) and `model` fields are advisory — they make it easy to confirm the
+server is on the GPU. Older clients ignore unknown JSON fields, so adding them
+is backward-compatible.
 
 The `X-Translation-Text` header carries the intermediate Japanese text. HTTP
 headers are latin-1 only, so the UTF-8 text is **percent-encoded**; clients
 percent-decode it. (`en-to-ja` returns both audio and text; the header is how
-the WiFi transport delivers the text alongside the audio body.)
+the WiFi transport delivers the text alongside the audio body.) The iOS WiFi
+client (`TranslationService.translateEnglishToJapanese`) decodes this header and
+displays the Japanese text, matching the Bluetooth path. Percent-encoding also
+keeps any CR/LF in the translated text out of the raw header, so translated
+content can't inject extra HTTP headers.
 
 **Error responses** distinguish the caller's fault from the server's:
 
@@ -129,8 +138,10 @@ Server tests live in `server/tests/` and run without loading the model:
   including `AudioDecodeError` on empty/garbage/zero-sample input.
 - `test_api.py` — FastAPI endpoints with a fake translator (the `TestClient` is
   created without its context manager so the model-loading lifespan never runs):
-  success paths, the 400/503/500 error taxonomy, and a concurrency test
-  (via `httpx.AsyncClient`) asserting inference is serialized to one call at a time.
+  success paths, the 400/503/500 error taxonomy, the `/health` device/model
+  fields, the `X-Translation-Text` round-trip / header-injection-safety contract,
+  and a concurrency test (via `httpx.AsyncClient`) asserting inference is
+  serialized to one call at a time.
 
 ```bash
 cd server

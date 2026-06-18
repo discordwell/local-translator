@@ -344,6 +344,16 @@ struct ContentView: View {
             return
         }
 
+        // Mirror the Bluetooth path's state handling so WiFi gets the same UX:
+        // lastTranslationMode gates the Replay button, and we clear this
+        // direction's previous result before the new one arrives.
+        lastTranslationMode = mode
+        if mode == .englishToJapanese {
+            japaneseText = ""
+        } else {
+            translationText = ""
+        }
+
         Task {
             do {
                 switch mode {
@@ -353,19 +363,33 @@ struct ContentView: View {
                         serverURL: serverURL
                     )
                     translationText = text
+                    japaneseText = ""
 
                 case .englishToJapanese:
-                    let japaneseAudio = try await translationService.translateEnglishToJapanese(
+                    let result = try await translationService.translateEnglishToJapanese(
                         audioData: audioData,
                         serverURL: serverURL
                     )
-                    translationText = "[Playing Japanese audio / 日本語音声を再生中]"
-                    audioPlayer.play(audioData: japaneseAudio)
+                    // Display the Japanese text the server returned alongside the
+                    // audio (via the X-Translation-Text header), like Bluetooth does.
+                    // If the server provided no text, fall back to a playback
+                    // indicator so the result block — and its Replay button — still
+                    // render (translationDisplayView only shows them when some text
+                    // is present).
+                    if result.text.isEmpty {
+                        translationText = "[Playing Japanese audio / 日本語音声を再生中]"
+                        japaneseText = ""
+                    } else {
+                        japaneseText = result.text
+                        translationText = ""
+                    }
+                    audioPlayer.play(audioData: result.audio)
                 }
                 errorMessage = nil
             } catch {
                 errorMessage = error.localizedDescription
                 translationText = ""
+                japaneseText = ""
             }
             isTranslating = false
         }

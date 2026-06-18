@@ -2,6 +2,46 @@
 
 ## Session Summaries
 
+### 2026-06-18 12:21 UTC — Complete WiFi EN→JA feature (iOS) + /health observability
+
+Third maintenance pass. Theme: finish the en-to-ja loop on the **WiFi** transport
+(the server already did its half; the client never consumed it) and add server
+observability. 48 → 50 tests, all green. iOS sources typecheck against the real
+iOS 26.5 SDK at the project's deployment target (17.0): 0 errors, 0 new warnings.
+
+- **Fixed two WiFi-only user-facing bugs** (Bluetooth path was already correct):
+  1. EN→JA **Japanese text was never displayed**. The server sends it in the
+     `X-Translation-Text` header (percent-encoded), but no client read it — dead
+     weight since pass 1. `TranslationService.translateEnglishToJapanese` now
+     returns `(audio: Data, text: String)`, decoding the header via
+     `removingPercentEncoding`; `ContentView.translateViaWiFi` displays it.
+  2. **Replay button never appeared** in WiFi mode — it's gated on
+     `lastTranslationMode == .englishToJapanese`, which only `translateViaBluetooth`
+     set. `translateViaWiFi` now sets it too (and clears this direction's stale
+     result), mirroring the Bluetooth path.
+- **Regression caught in code review + fixed**: removing the old
+  `"[Playing Japanese audio…]"` placeholder meant that when the server returns an
+  *empty* `X-Translation-Text` (a real path — `translate_en_to_ja` inits
+  `japanese_text=""` and swallows decode errors), both text fields were empty, so
+  the result block (which *contains* the Replay button, gated on
+  `!translationText.isEmpty || !japaneseText.isEmpty`) vanished while audio played.
+  Now the placeholder is kept as a fallback only when `result.text` is empty.
+- **`/health` now reports `device` + `model`** (new `Translator.device_name`
+  property → `"mps"/"cuda"/"cpu"` or `null` before load). GPU-vs-CPU is this
+  project's main perf lever, so confirming the backend via curl is useful.
+  Backward-compatible: iOS `HealthResponse` is non-strict `Codable` (ignores
+  unknown keys).
+- **Tests** (+2 net; existing health tests updated): `X-Translation-Text`
+  round-trip + **header-injection safety** (CRLF in translated text must not split
+  the header — `quote()` encodes it to `%0D%0A`), empty-text header, and the
+  `/health` device/model fields. Strengthened after a review-sweep flagged the
+  injection test's CR check was vacuous and the unloaded-health test never
+  asserted `model`.
+- Verified: `cd server && pytest` → 50 passed; iOS `swiftc -typecheck` clean.
+  Code review: 3 finder angles + verify + sweep; the one real regression fixed.
+- **Did NOT push or deploy** (orchestrator handles push; deploys are out of scope
+  for this automated pass, overriding the global "deploy after user-facing" rule).
+
 ### 2026-06-18 04:39 UTC — Server robustness: non-blocking inference, error taxonomy
 
 Second maintenance pass on the Python server (iOS app untouched). Theme: WiFi
@@ -86,3 +126,15 @@ Maintenance pass on the Python server (iOS app untouched).
   bad-input signal: `_load_audio` raises it on undecodable/zero-sample audio;
   endpoints map it to HTTP 400. A plain `ValueError` still maps to 500, so the
   subclass ordering in `_run_inference` matters (catch `AudioDecodeError` first).
+- **`X-Translation-Text` is the WiFi EN→JA text contract.** Server percent-encodes
+  the Japanese text (latin-1 safe, and CR/LF → `%0D%0A` so it can't split the
+  header); `TranslationService.translateEnglishToJapanese` decodes it with
+  `removingPercentEncoding`. The server always sends the header (possibly empty).
+- **Latent display gap (both transports, NOT yet fixed for Bluetooth):**
+  `ContentView.translationDisplayView` gates the whole EN→JA result block — *and*
+  the Replay button inside it — on `!translationText.isEmpty || !japaneseText.isEmpty`.
+  If the model yields audio but **empty** intermediate text, the block (and Replay)
+  vanish and the idle placeholder shows mid-playback. WiFi works around this with a
+  placeholder fallback in `translateViaWiFi`; the Bluetooth path (`onChange` ignores
+  empty text) still has the gap. The deeper fix is to decouple the Replay button
+  from text being present — a future pass (needs a device wet-test to verify).

@@ -56,8 +56,10 @@ class TranslationService {
     /// - Parameters:
     ///   - audioData: WAV audio data containing English speech
     ///   - serverURL: Base URL of the translation server
-    /// - Returns: WAV audio data containing Japanese speech
-    func translateEnglishToJapanese(audioData: Data, serverURL: URL) async throws -> Data {
+    /// - Returns: A tuple of the WAV audio data (Japanese speech) and the
+    ///   intermediate Japanese text the server recognized. The text is empty
+    ///   when the server could not provide it.
+    func translateEnglishToJapanese(audioData: Data, serverURL: URL) async throws -> (audio: Data, text: String) {
         let endpoint = serverURL.appendingPathComponent("translate/en-to-ja")
 
         var request = URLRequest(url: endpoint)
@@ -86,7 +88,13 @@ class TranslationService {
             throw TranslationError.serverError(statusCode: httpResponse.statusCode)
         }
 
-        return data
+        // The server delivers the intermediate Japanese text in a percent-encoded
+        // (latin-1 safe) X-Translation-Text header alongside the audio body, so
+        // percent-decode it back to UTF-8 for display.
+        let encodedText = httpResponse.value(forHTTPHeaderField: "X-Translation-Text") ?? ""
+        let japaneseText = encodedText.removingPercentEncoding ?? ""
+
+        return (audio: data, text: japaneseText)
     }
 
     /// Check if the server is healthy and the model is loaded.

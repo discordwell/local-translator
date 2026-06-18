@@ -89,11 +89,17 @@ app = FastAPI(
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    ``device`` and ``model`` are advisory (older clients ignore unknown fields);
+    they make it easy to confirm the server is on the GPU and which model it runs.
+    """
     translator = get_translator()
     return {
         "status": "ok",
         "model_loaded": translator.is_loaded,
+        "device": translator.device_name,
+        "model": translator.model_name,
     }
 
 

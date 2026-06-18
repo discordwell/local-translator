@@ -7,6 +7,8 @@ Provides:
 """
 
 import io
+from typing import Optional
+
 import torch
 import numpy as np
 import soundfile as sf
@@ -75,6 +77,15 @@ class Translator:
     @property
     def is_loaded(self) -> bool:
         return self._loaded
+
+    @property
+    def device_name(self) -> Optional[str]:
+        """Active torch device type ('mps' / 'cuda' / 'cpu'), or None before load.
+
+        Surfaced by ``/health`` so a client (or a curl) can confirm which backend
+        is in use — the GPU-vs-CPU distinction is the main performance lever here.
+        """
+        return self.device.type if self.device is not None else None
 
     def _clear_cache(self):
         """Clear GPU memory cache to prevent accumulation."""

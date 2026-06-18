@@ -17,11 +17,14 @@ from translator import AudioDecodeError
 
 class FakeTranslator:
     def __init__(self, loaded=True, ja_en="hello",
-                 en_ja=(b"RIFF-fake-wav-bytes", "こんにちは"), raises=None):
+                 en_ja=(b"RIFF-fake-wav-bytes", "こんにちは"), raises=None,
+                 device_name="cpu", model_name="fake-model"):
         self.is_loaded = loaded
         self._ja_en = ja_en
         self._en_ja = en_ja
         self._raises = raises
+        self.device_name = device_name
+        self.model_name = model_name
 
     def load(self):  # no-op, so an accidental lifespan call stays cheap
         self.is_loaded = True
@@ -55,17 +58,27 @@ def _empty_upload():
 
 
 def test_health_ok(client, monkeypatch):
-    _use(monkeypatch, FakeTranslator(loaded=True))
+    _use(monkeypatch, FakeTranslator(loaded=True, device_name="mps", model_name="seamless"))
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "model_loaded": True}
+    assert r.json() == {
+        "status": "ok",
+        "model_loaded": True,
+        "device": "mps",
+        "model": "seamless",
+    }
 
 
 def test_health_reports_unloaded_model(client, monkeypatch):
-    _use(monkeypatch, FakeTranslator(loaded=False))
+    # Before load() the device is unknown (None -> JSON null), but the model name
+    # is still reported so a client can see what will be loaded.
+    _use(monkeypatch, FakeTranslator(loaded=False, device_name=None, model_name="seamless"))
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["model_loaded"] is False
+    body = r.json()
+    assert body["model_loaded"] is False
+    assert body["device"] is None
+    assert body["model"] == "seamless"
 
 
 def test_ja_to_en_success(client, monkeypatch):
@@ -113,6 +126,37 @@ def test_en_to_ja_returns_audio_and_text_header(client, monkeypatch):
     assert r.content == b"RIFF-fake-wav-bytes"
     # Japanese text rides along in a percent-encoded (latin-1 safe) header.
     assert urllib.parse.unquote(r.headers["x-translation-text"]) == "こんにちは"
+
+
+def test_en_to_ja_header_round_trips_and_resists_injection(client, monkeypatch):
+    """The X-Translation-Text contract the WiFi client decodes.
+
+    Percent-encoding must (a) recover the exact UTF-8 text on the client side and
+    (b) never emit a raw CR/LF, which would otherwise let translated text inject
+    extra HTTP headers. The iOS client mirrors this with removingPercentEncoding.
+    """
+    # Includes a CRLF — the exact sequence an attacker would use to split the
+    # header — plus a multibyte run and a literal percent and quote.
+    text = "これはテスト\r\nLine 2: 50% \"done\""
+    _use(monkeypatch, FakeTranslator(en_ja=(b"RIFF-wav", text)))
+    r = client.post("/translate/en-to-ja", files=_wav_upload())
+    assert r.status_code == 200
+
+    raw = r.headers["x-translation-text"]
+    # Neither the carriage return nor the newline leaks into the raw header value.
+    assert "\n" not in raw and "\r" not in raw
+    # And the client recovers the original text byte-for-byte.
+    assert urllib.parse.unquote(raw) == text
+
+
+def test_en_to_ja_empty_text_still_sends_header(client, monkeypatch):
+    """When the model yields no intermediate text, the header is still present
+    (empty), so the client's decode path has a well-defined, non-crashing input."""
+    _use(monkeypatch, FakeTranslator(en_ja=(b"RIFF-wav", "")))
+    r = client.post("/translate/en-to-ja", files=_wav_upload())
+    assert r.status_code == 200
+    assert r.headers["x-translation-text"] == ""
+    assert urllib.parse.unquote(r.headers["x-translation-text"]) == ""
 
 
 def test_en_to_ja_503_when_model_not_loaded(client, monkeypatch):
