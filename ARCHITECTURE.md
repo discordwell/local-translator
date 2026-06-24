@@ -124,6 +124,11 @@ retries via `peripheralManagerIsReadyToUpdateSubscribers_`.
 - **Warmup:** a dummy inference runs at startup to pre-compile kernels so the
   first real request isn't slow.
 - GPU memory cache is cleared after each request to avoid accumulation.
+- EN→JA output: `Translator._encode_waveform_wav` turns the model's float16
+  waveform tensor into the 16-bit PCM WAV bytes the client plays. It casts to
+  float32 (soundfile can't take float16) and `np.atleast_1d`-guards the
+  degenerate single-sample clip that `squeeze()` would otherwise reduce to an
+  unwritable 0-d scalar.
 
 `Translator._preprocess_audio` (peak-normalize + 80 Hz high-pass) exists as an
 opt-in helper but is **not** wired into the inference path — SeamlessM4T's
@@ -135,7 +140,9 @@ Server tests live in `server/tests/` and run without loading the model:
 
 - `test_ble_protocol.py` — framing/reassembly round-trips and edge cases.
 - `test_translator_audio.py` — audio decode/resample/preprocess helpers,
-  including `AudioDecodeError` on empty/garbage/zero-sample input.
+  including `AudioDecodeError` on empty/garbage/zero-sample input, plus the
+  EN→JA `_encode_waveform_wav` round-trip, signal preservation, and the
+  single-sample guard.
 - `test_api.py` — FastAPI endpoints with a fake translator (the `TestClient` is
   created without its context manager so the model-loading lifespan never runs):
   success paths, the 400/503/500 error taxonomy, the `/health` device/model

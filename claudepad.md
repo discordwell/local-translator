@@ -2,6 +2,51 @@
 
 ## Session Summaries
 
+### 2026-06-24 05:44 UTC — Close the EN→JA Replay gap (iOS) + harden/test WAV encoding (server)
+
+Fourth maintenance pass. Theme: finish the **English→Japanese audio path** end
+to end. Fixed the last documented user-facing bug and added coverage to the
+previously-untested server-side WAV encoding on the same path. 50 → 53 server
+tests, all green (twice). iOS typechecks at the 17.0 target: 0 errors, 0 new
+warnings (the 2 pre-existing `allowBluetooth`/unused-result warnings are
+untouched).
+
+- **Fixed the long-deferred Bluetooth Replay gap** (was flagged "NOT yet fixed"
+  in Key Findings). EN→JA can return synthesized audio with an **empty**
+  intermediate text; the result block — and the Replay button inside it — was
+  gated on text being present, so on Bluetooth (whose `translatedText` onChange
+  ignores empty text) the block vanished mid-playback and the audio couldn't be
+  replayed. Now `ContentView.hasTranslationResult` gates the block on text **OR**
+  a replayable EN→JA audio result (`lastTranslationMode == .englishToJapanese &&
+  audioPlayer.canReplay`), so Replay is reachable on both transports. The WiFi
+  placeholder workaround (`"[Playing Japanese audio…]"`) is removed — both
+  transports now behave identically.
+- **Made `AudioPlayer.canReplay` observable** (`@Published private(set)`, set in
+  `play()`) instead of a computed property over a non-published `lastPlayedAudio`.
+  This is the load-bearing change: it guarantees the SwiftUI re-render that
+  surfaces the Replay button, rather than relying on an incidental re-render from
+  some other `@Published` change happening to coincide.
+- **Fixed a stale-text sub-bug**: `translateViaWiFi`/`translateViaBluetooth` each
+  cleared only the field the new translation would populate, relying on the
+  result handler to clear the other — which never fires for empty-text EN→JA. So
+  a prior JA→EN English string could linger beside the new Japanese audio. Both
+  now clear **both** fields up front (invisible — the view shows "Translating…"
+  meanwhile).
+- **Server: extracted + hardened `Translator._encode_waveform_wav`** from
+  `translate_en_to_ja` (the waveform-tensor → WAV-bytes step, previously inline
+  and untested). Byte-identical for normal multi-sample output (verified
+  empirically in review); `np.atleast_1d` now guards the degenerate single-sample
+  clip that `squeeze()` would collapse to an unwritable 0-d scalar.
+- **Tests** (+3): `_encode_waveform_wav` round-trip (N samples in → N samples
+  out), signal preservation (within 16-bit PCM quantization), and the
+  single-sample guard. Uses a real `torch` tensor (already imported transitively
+  by `translator`), so no new dep.
+- Verified: `cd server && pytest` → 53 passed (twice); iOS `swiftc -typecheck`
+  clean. Code-review sub-agent traced the SwiftUI re-render chain and the
+  byte-identical extraction — no correctness issues.
+- **Did NOT push or deploy** (orchestrator handles push; deploys are out of scope
+  for this automated pass).
+
 ### 2026-06-18 12:21 UTC — Complete WiFi EN→JA feature (iOS) + /health observability
 
 Third maintenance pass. Theme: finish the en-to-ja loop on the **WiFi** transport
@@ -130,11 +175,14 @@ Maintenance pass on the Python server (iOS app untouched).
   the Japanese text (latin-1 safe, and CR/LF → `%0D%0A` so it can't split the
   header); `TranslationService.translateEnglishToJapanese` decodes it with
   `removingPercentEncoding`. The server always sends the header (possibly empty).
-- **Latent display gap (both transports, NOT yet fixed for Bluetooth):**
-  `ContentView.translationDisplayView` gates the whole EN→JA result block — *and*
-  the Replay button inside it — on `!translationText.isEmpty || !japaneseText.isEmpty`.
-  If the model yields audio but **empty** intermediate text, the block (and Replay)
-  vanish and the idle placeholder shows mid-playback. WiFi works around this with a
-  placeholder fallback in `translateViaWiFi`; the Bluetooth path (`onChange` ignores
-  empty text) still has the gap. The deeper fix is to decouple the Replay button
-  from text being present — a future pass (needs a device wet-test to verify).
+- **EN→JA empty-text display gap — FIXED (2026-06-24).** EN→JA can return audio
+  with **empty** intermediate text; the result block (and the Replay button in it)
+  used to be gated on text being present, so on Bluetooth it vanished mid-playback.
+  Now `ContentView.hasTranslationResult` gates the block on text **OR** a replayable
+  EN→JA audio result (`lastTranslationMode == .englishToJapanese &&
+  audioPlayer.canReplay`); `canReplay` is a `@Published` property on `AudioPlayer`
+  (set in `play()`), which is what reliably drives the re-render. The old WiFi
+  placeholder workaround is gone — both transports behave identically. Both
+  `translateViaWiFi`/`translateViaBluetooth` clear *both* text fields up front so a
+  prior result never lingers. Not device-wet-tested (no hardware in the automated
+  pass), but typechecked and the re-render chain traced in review.

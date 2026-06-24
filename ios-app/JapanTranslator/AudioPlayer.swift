@@ -8,6 +8,12 @@ class AudioPlayer: NSObject, ObservableObject {
     /// Whether currently playing audio
     @Published var isPlaying: Bool = false
 
+    /// Whether there is audio available to replay. Published (rather than a
+    /// computed property over `lastPlayedAudio`) so SwiftUI drives the Replay
+    /// button's visibility from real state, instead of relying on an incidental
+    /// re-render from some other @Published change happening to coincide.
+    @Published private(set) var canReplay: Bool = false
+
     private var audioPlayer: AVAudioPlayer?
     private var audioQueue: [Data] = []
     private var isProcessingQueue: Bool = false
@@ -49,6 +55,7 @@ class AudioPlayer: NSObject, ObservableObject {
 
         // Store for replay
         lastPlayedAudio = audioData
+        canReplay = true
 
         // Add to queue
         audioQueue.append(audioData)
@@ -66,11 +73,6 @@ class AudioPlayer: NSObject, ObservableObject {
             return
         }
         play(audioData: audioData)
-    }
-
-    /// Check if there's audio available to replay
-    var canReplay: Bool {
-        return lastPlayedAudio != nil
     }
 
     private func processQueue() {

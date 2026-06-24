@@ -91,5 +91,43 @@ def test_preprocess_handles_silence(tr):
     assert np.all(out == 0.0)
 
 
+def test_encode_waveform_wav_round_trips(tr):
+    """A (batch=1, N) model waveform encodes to a readable N-sample WAV."""
+    import torch
+
+    samples = 1600
+    wav = torch.zeros((1, samples), dtype=torch.float16)
+    data = tr._encode_waveform_wav(wav, 16000)
+    arr, sr = sf.read(io.BytesIO(data))
+    assert sr == 16000
+    assert arr.shape[0] == samples
+
+
+def test_encode_waveform_wav_preserves_signal(tr):
+    """The encoded WAV recovers the input signal (within 16-bit PCM quantization)."""
+    import torch
+
+    signal_in = np.sin(
+        2 * np.pi * 440 * np.linspace(0, 0.1, 1600, endpoint=False)
+    ).astype(np.float32)
+    wav = torch.from_numpy(signal_in).unsqueeze(0)  # shape (1, 1600)
+    data = tr._encode_waveform_wav(wav, 16000)
+    arr, _ = sf.read(io.BytesIO(data))
+    assert arr.shape[0] == signal_in.shape[0]
+    # Default WAV subtype is 16-bit PCM, so allow for quantization error.
+    assert np.allclose(arr, signal_in, atol=1e-3)
+
+
+def test_encode_waveform_wav_handles_single_sample(tr):
+    """A 1-sample clip squeezes to a 0-d scalar; atleast_1d keeps it writable."""
+    import torch
+
+    wav = torch.tensor([[0.5]], dtype=torch.float32)  # (1, 1) -> squeeze -> scalar
+    data = tr._encode_waveform_wav(wav, 16000)
+    arr, sr = sf.read(io.BytesIO(data))
+    assert sr == 16000
+    assert np.atleast_1d(arr).shape[0] == 1
+
+
 def test_get_translator_is_singleton():
     assert get_translator() is get_translator()

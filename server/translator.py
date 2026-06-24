@@ -161,6 +161,22 @@ class Translator:
 
         return waveform.astype(np.float32)
 
+    def _encode_waveform_wav(self, waveform, sample_rate: int) -> bytes:
+        """Encode a model-output waveform tensor to WAV bytes.
+
+        ``output.waveform`` is a torch tensor of shape ``(batch, samples)``; we
+        always generate with batch size 1, so squeezing yields the 1-D signal.
+        ``np.atleast_1d`` guards the degenerate single-sample clip, where
+        ``squeeze`` would otherwise collapse to a 0-d scalar that ``soundfile``
+        cannot write. The tensor is cast to float32 first because ``soundfile``
+        cannot consume the model's float16 GPU output; ``soundfile`` then writes
+        its default 16-bit PCM WAV, which is what the iOS client plays.
+        """
+        audio_array = np.atleast_1d(waveform.cpu().float().numpy().squeeze())
+        buf = io.BytesIO()
+        sf.write(buf, audio_array, sample_rate, format="WAV")
+        return buf.getvalue()
+
     def translate_ja_to_en(self, audio_bytes: bytes) -> str:
         """
         Translate Japanese speech to English text.
@@ -255,18 +271,10 @@ class Translator:
                 except Exception:
                     pass
 
-            # Extract audio waveform from output (convert to float32 for WAV compatibility)
-            audio_array = output.waveform.cpu().float().numpy().squeeze()
-
-            # The model outputs at 16kHz sample rate
-            output_sample_rate = self.model.config.sampling_rate
-
-            # Convert to WAV bytes
-            audio_io = io.BytesIO()
-            sf.write(audio_io, audio_array, output_sample_rate, format='WAV')
-            audio_io.seek(0)
-            audio_data = audio_io.read()
-            audio_io.close()
+            # Convert the synthesized waveform (16 kHz) to WAV bytes.
+            audio_data = self._encode_waveform_wav(
+                output.waveform, self.model.config.sampling_rate
+            )
 
             return audio_data, japanese_text
         finally:

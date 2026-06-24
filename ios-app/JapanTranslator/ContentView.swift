@@ -57,6 +57,20 @@ struct ContentView: View {
         }
     }
 
+    /// Whether there is a translation result to display.
+    ///
+    /// EN→JA can finish with synthesized audio but *no* intermediate text (the
+    /// server inits `japanese_text=""` and swallows decode errors). In that case
+    /// we still want the result block — and the Replay button inside it — to
+    /// show, so visibility is gated on text OR a replayable EN→JA audio result
+    /// rather than on text alone. This is what makes Replay reachable on the
+    /// Bluetooth path when the model returns audio without text.
+    private var hasTranslationResult: Bool {
+        !translationText.isEmpty
+            || !japaneseText.isEmpty
+            || (lastTranslationMode == .englishToJapanese && audioPlayer.canReplay)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -187,7 +201,7 @@ struct ContentView: View {
                             .cornerRadius(8)
                     }
                 }
-            } else if !translationText.isEmpty || !japaneseText.isEmpty {
+            } else if hasTranslationResult {
                 // Show translation text
                 if !translationText.isEmpty {
                     Text(translationText)
@@ -344,15 +358,15 @@ struct ContentView: View {
             return
         }
 
-        // Mirror the Bluetooth path's state handling so WiFi gets the same UX:
-        // lastTranslationMode gates the Replay button, and we clear this
-        // direction's previous result before the new one arrives.
+        // Mirror the Bluetooth path's state handling: lastTranslationMode gates
+        // the Replay button, and clearing *both* result fields up front means a
+        // previous translation never lingers next to the new one. (Clearing both
+        // matters for EN→JA, which can return audio with no text — see
+        // hasTranslationResult.) The view shows "Translating…" meanwhile, so the
+        // clear is never visible as a flash.
         lastTranslationMode = mode
-        if mode == .englishToJapanese {
-            japaneseText = ""
-        } else {
-            translationText = ""
-        }
+        translationText = ""
+        japaneseText = ""
 
         Task {
             do {
@@ -363,7 +377,6 @@ struct ContentView: View {
                         serverURL: serverURL
                     )
                     translationText = text
-                    japaneseText = ""
 
                 case .englishToJapanese:
                     let result = try await translationService.translateEnglishToJapanese(
@@ -371,18 +384,11 @@ struct ContentView: View {
                         serverURL: serverURL
                     )
                     // Display the Japanese text the server returned alongside the
-                    // audio (via the X-Translation-Text header), like Bluetooth does.
-                    // If the server provided no text, fall back to a playback
-                    // indicator so the result block — and its Replay button — still
-                    // render (translationDisplayView only shows them when some text
-                    // is present).
-                    if result.text.isEmpty {
-                        translationText = "[Playing Japanese audio / 日本語音声を再生中]"
-                        japaneseText = ""
-                    } else {
-                        japaneseText = result.text
-                        translationText = ""
-                    }
+                    // audio (via the X-Translation-Text header), like Bluetooth
+                    // does. When it's empty the result block — and its Replay
+                    // button — still render via hasTranslationResult, so no
+                    // placeholder is needed.
+                    japaneseText = result.text
                     audioPlayer.play(audioData: result.audio)
                 }
                 errorMessage = nil
@@ -397,12 +403,12 @@ struct ContentView: View {
 
     private func translateViaBluetooth(mode: TranslationMode, audioData: Data) {
         lastTranslationMode = mode
-        // Clear previous results
-        if mode == .englishToJapanese {
-            japaneseText = ""
-        } else {
-            translationText = ""
-        }
+        // Clear both previous results up front. For EN→JA the model may return
+        // audio with empty text, in which case the translatedText onChange below
+        // never fires — so without clearing here, a prior JA→EN string would
+        // linger beside the new Japanese audio result.
+        translationText = ""
+        japaneseText = ""
 
         switch mode {
         case .japaneseToEnglish:
